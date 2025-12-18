@@ -6,7 +6,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 # --- 設定 ---
 # 以前教えていただいたスプレッドシートID
-SPREADSHEET_ID = '1mobXuRWq4fu1NZQsFm4Qw9-2uSVotttpefk9MWwOW54'
+SPREADSHEET_ID = '1mobXuRWq4fu1NZQsFm4Qw9-2uSVotttpefk9MWwOW54/edit?gid=0#gid=0'
 SHEET_NAME = 'Reports' # シート名を「Reports」に変更するか、ここを実際のシート名に合わせてください
 
 st.set_page_config(page_title="作業日報システム", layout="wide") # 一覧が見やすいようにwideモードに変更
