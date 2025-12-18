@@ -5,32 +5,47 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- 設定 ---
-# 以前教えていただいたスプレッドシートID
-SPREADSHEET_ID = '1mobXuRWq4fu1NZQsFm4Qw9-2uSVotttpefk9MWwOW54/edit?gid=0#gid=0'
-SHEET_NAME = 'Reports' # シート名を「Reports」に変更するか、ここを実際のシート名に合わせてください
+SPREADSHEET_ID = '1mobXuRWq4fu1NZQsFm4Qw9-2uSVotttpefk9MWwOW54' # あなたのIDのまま
+SHEET_NAME_REPORT = 'Reports'
+SHEET_NAME_SETTINGS = 'Settings' # 新しく作ったシート
 
-st.set_page_config(page_title="作業日報システム", layout="wide") # 一覧が見やすいようにwideモードに変更
+st.set_page_config(page_title="作業日報システム", layout="wide")
 
-# --- Google Sheets接続設定 ---
+# --- Google Sheets接続 ---
 @st.cache_resource
-def get_worksheet():
+def get_worksheet(sheet_name):
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        # Streamlit CloudのSecretsから認証情報を取得
         creds_dict = st.secrets["gcp_service_account"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        return client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
+        return client.open_by_key(SPREADSHEET_ID).worksheet(sheet_name)
     except Exception as e:
-        st.error(f"スプレッドシート接続エラー: {e}")
+        st.error(f"接続エラー ({sheet_name}): {e}")
         return None
 
-# --- データ保存関数 ---
-def save_report(data_dict):
-    sh = get_worksheet()
+# --- マスタデータ（選択肢）の読み込み ---
+def get_options(category_name):
+    sh = get_worksheet(SHEET_NAME_SETTINGS)
     if sh:
-        # 辞書の値（入力データ）をリストにして追加
-        # 保存する順番: 日付, 工場, 作業者, ライン, 型番, 製品, 機械, 研削数, 不良数...
+        data = sh.get_all_records()
+        df = pd.DataFrame(data)
+        # category列が一致するものだけを抽出してリスト化
+        if not df.empty and 'category' in df.columns:
+            return df[df['category'] == category_name]['value'].tolist()
+    return [] # データがない場合は空リスト
+
+# --- マスタデータ（選択肢）の追加 ---
+def add_option(category, value):
+    sh = get_worksheet(SHEET_NAME_SETTINGS)
+    if sh:
+        sh.append_row([category, value])
+        st.cache_data.clear() # キャッシュを消して即座に反映
+
+# --- 日報保存 ---
+def save_report(data_dict):
+    sh = get_worksheet(SHEET_NAME_REPORT)
+    if sh:
         row = [
             datetime.now().strftime('%Y-%m-%d %H:%M'),
             data_dict['factory'],
@@ -39,17 +54,15 @@ def save_report(data_dict):
             data_dict['model'],
             data_dict['product'],
             data_dict['machine'],
-            data_dict['k_ok'], # 研削 良品
-            data_dict['k_ng'], # 研削 不良
-            data_dict['r_ok'], # ラバ研 良品
-            data_dict['r_ng'], # ラバ研 不良
+            data_dict['k_ok'], data_dict['k_ng'],
+            data_dict['r_ok'], data_dict['r_ng'],
             data_dict['note']
         ]
         sh.append_row(row)
 
-# --- データ読み込み関数 ---
-def load_data():
-    sh = get_worksheet()
+# --- 履歴読み込み ---
+def load_reports():
+    sh = get_worksheet(SHEET_NAME_REPORT)
     if sh:
         data = sh.get_all_records()
         return pd.DataFrame(data)
@@ -58,122 +71,161 @@ def load_data():
 # --- セッション初期化 ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
-if 'factory' not in st.session_state:
-    st.session_state['factory'] = ""
+if 'role' not in st.session_state:
+    st.session_state['role'] = "user" # user か admin
 
 # ==========================================
-# 画面1: ログイン
+# 画面1: ログイン (管理者を追加)
 # ==========================================
 def login_page():
     st.markdown("## 🏭 作業日報システム")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.container(border=True):
-            factory = st.selectbox("工場", ["本社工場", "八尾工場"])
-            password = st.text_input("パスワード", type="password")
-            if st.button("ログイン", type="primary", use_container_width=True):
-                if (factory == "本社工場" and password == "honsha") or \
-                   (factory == "八尾工場" and password == "yao"):
-                    st.session_state['logged_in'] = True
-                    st.session_state['factory'] = factory
-                    st.rerun()
-                else:
-                    st.error("パスワードが違います")
+            # ログインタイプ選択
+            login_type = st.radio("ログイン種別", ["作業者", "管理者"], horizontal=True)
+            
+            if login_type == "作業者":
+                factory = st.selectbox("工場", ["本社工場", "八尾工場"])
+                password = st.text_input("パスワード", type="password")
+                if st.button("ログイン", type="primary", use_container_width=True):
+                    if (factory == "本社工場" and password == "honsha") or \
+                       (factory == "八尾工場" and password == "yao"):
+                        st.session_state['logged_in'] = True
+                        st.session_state['role'] = "user"
+                        st.session_state['factory'] = factory
+                        st.rerun()
+                    else:
+                        st.error("パスワードが違います")
+            
+            else: # 管理者ログイン
+                admin_pass = st.text_input("管理者パスワード", type="password")
+                if st.button("管理者ログイン", type="primary", use_container_width=True):
+                    if admin_pass == "admin123": # 仮の管理者パスワード
+                        st.session_state['logged_in'] = True
+                        st.session_state['role'] = "admin"
+                        st.session_state['factory'] = "全社管理"
+                        st.rerun()
+                    else:
+                        st.error("パスワードが違います")
 
 # ==========================================
-# 画面2: メイン（入力 ＆ 一覧）
+# 画面2: 管理者設定画面 (NEW!)
 # ==========================================
-def main_page():
-    # サイドバー
+def admin_page():
+    st.title("🛠 管理者設定画面")
+    
+    with st.sidebar:
+        st.write("ログイン中: 管理者")
+        if st.button("ログアウト"):
+            st.session_state['logged_in'] = False
+            st.rerun()
+
+    st.info("ここでドロップダウンの選択肢を追加できます。")
+
+    # 追加したいカテゴリを選択
+    target_cat = st.selectbox("編集する項目を選択", [
+        "line", "worker", "model", "product", "machine"
+    ], format_func=lambda x: {
+        "line": "ライン種別", "worker": "作業者", "model": "型番", 
+        "product": "製品種別", "machine": "機械種別"
+    }[x])
+
+    # 現在のリストを表示
+    current_list = get_options(target_cat)
+    st.write(f"▼ 現在の登録済みリスト ({len(current_list)}件)")
+    st.code(", ".join(current_list) if current_list else "(登録なし)")
+
+    # 新規追加フォーム
+    with st.form("add_master_form"):
+        new_value = st.text_input("追加する名称を入力")
+        if st.form_submit_button("追加する", type="primary"):
+            if new_value and new_value not in current_list:
+                add_option(target_cat, new_value)
+                st.success(f"「{new_value}」を追加しました！")
+                st.rerun()
+            elif new_value in current_list:
+                st.warning("その名称は既に登録されています。")
+            else:
+                st.warning("名称を入力してください。")
+
+    st.markdown("---")
+    st.subheader("📊 全データ確認")
+    if st.button("日報データを読み込む"):
+        df = load_reports()
+        st.dataframe(df)
+
+# ==========================================
+# 画面3: 作業者ページ (選択肢を動的に変更)
+# ==========================================
+def user_page():
     with st.sidebar:
         st.write(f"所属: **{st.session_state['factory']}**")
         if st.button("ログアウト"):
             st.session_state['logged_in'] = False
             st.rerun()
 
-    # タブで画面切り替え
     tab_input, tab_list = st.tabs(["📝 日報入力", "📊 履歴一覧"])
 
-    # --- タブ1: 入力画面 ---
     with tab_input:
         st.subheader("作業日報入力")
-        
-        # フォームとしてまとめることで、途中でリロードされるのを防ぎます
         with st.form("work_report_form"):
-            c1, c2 = st.columns(2)
-            line = c1.selectbox("▎ライン種別", ["外径ライン", "組み立てライン", "3号ライン"])
-            worker = c2.selectbox("▎作業者", ["廣瀬", "青井", "門", "坂本"])
+            # スプレッドシートから選択肢を取得
+            # データがない場合のデフォルト値も設定
+            opt_lines = get_options("line") or ["(管理者が未登録)"]
+            opt_workers = get_options("worker") or ["(管理者が未登録)"]
+            opt_models = get_options("model") or ["その他"]
+            opt_products = get_options("product") or ["その他"]
+            opt_machines = get_options("machine") or ["その他"]
 
-            model = st.selectbox("▎型番", ["UA25", "SN6311T071", "RNU205ETW2", "その他"])
+            c1, c2 = st.columns(2)
+            line = c1.selectbox("▎ライン種別", opt_lines)
+            worker = c2.selectbox("▎作業者", opt_workers)
+
+            model = st.selectbox("▎型番", ["検索..."] + opt_models)
 
             c3, c4 = st.columns(2)
-            product = c3.selectbox("▎製品種別", ["SHI", "韓国", "シリンドリカル"])
-            machine = c4.selectbox("▎機械種別", ["センターレス1号機", "T11J", "組立機1号機"])
+            product = c3.selectbox("▎製品種別", opt_products)
+            machine = c4.selectbox("▎機械種別", opt_machines)
 
             st.markdown("---")
-            # 数値入力エリア
+            # 数値入力など（変更なし）
             c_k1, c_k2 = st.columns(2)
-            k_ok = c_k1.number_input("▎研削 研磨数", min_value=0, step=1)
-            k_ng = c_k2.number_input("▎研削 不良数", min_value=0, step=1)
+            k_ok = c_k1.number_input("▎研削 研磨数", min_value=0)
+            k_ng = c_k2.number_input("▎研削 不良数", min_value=0)
             
             c_r1, c_r2 = st.columns(2)
-            r_ok = c_r1.number_input("▎ラバ研 研磨数", min_value=0, step=1)
-            r_ng = c_r2.number_input("▎ラバ研 不良数", min_value=0, step=1)
+            r_ok = c_r1.number_input("▎ラバ研 研磨数", min_value=0)
+            r_ng = c_r2.number_input("▎ラバ研 不良数", min_value=0)
 
             note = st.text_area("▎備考")
 
-            # 送信ボタン
-            submitted = st.form_submit_button("日報を提出（保存）", type="primary", use_container_width=True)
-
-            if submitted:
-                # データをまとめる
+            if st.form_submit_button("日報を提出", type="primary", use_container_width=True):
                 report_data = {
                     "factory": st.session_state['factory'],
-                    "worker": worker,
-                    "line": line,
-                    "model": model,
-                    "product": product,
-                    "machine": machine,
-                    "k_ok": k_ok, "k_ng": k_ng,
-                    "r_ok": r_ok, "r_ng": r_ng,
+                    "worker": worker, "line": line, "model": model,
+                    "product": product, "machine": machine,
+                    "k_ok": k_ok, "k_ng": k_ng, "r_ok": r_ok, "r_ng": r_ng,
                     "note": note
                 }
-                
-                # 保存処理実行
-                with st.spinner("保存中..."):
-                    save_report(report_data)
-                
-                st.success("✅ スプレッドシートに保存しました！")
-                st.cache_data.clear() # キャッシュをクリアして一覧を最新にする
+                save_report(report_data)
+                st.success("保存しました！")
 
-    # --- タブ2: 一覧画面 ---
     with tab_list:
-        st.subheader("作業履歴一覧")
-        
-        # データの読み込み
-        if st.button("🔄 最新データを取得"):
+        if st.button("最新データ取得"):
             st.cache_data.clear()
-        
-        df = load_data()
-        
+            st.rerun()
+        df = load_reports()
         if not df.empty:
-            # 工場でフィルタリング（自分の工場のデータだけ見る場合）
-            # df = df[df['工場'] == st.session_state['factory']] 
-            
-            # 見やすいようにテーブル表示
-            st.dataframe(
-                df, 
-                use_container_width=True,
-                height=500,
-                hide_index=True
-            )
-        else:
-            st.info("データがまだありません。日報を入力してください。")
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
 # ==========================================
-# 起動制御
+# メイン処理
 # ==========================================
 if st.session_state['logged_in']:
-    main_page()
+    if st.session_state['role'] == "admin":
+        admin_page()
+    else:
+        user_page()
 else:
     login_page()
