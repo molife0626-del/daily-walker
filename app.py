@@ -30,7 +30,6 @@ def get_data_as_df(sheet_name):
     sh = get_worksheet(sheet_name)
     if sh:
         data = sh.get_all_records()
-        # 全て文字列として取得（ロットなどの型崩れ防止）
         return pd.DataFrame(data).astype(str)
     return pd.DataFrame()
 
@@ -77,31 +76,20 @@ def save_counting_rule(factory, line, model, machine, column):
         st.cache_data.clear()
 
 def append_schedule_data(factory_name, df_input):
-    """
-    データフレーム(日本語カラム)をScheduleシートの形式(英語カラム)に変換して保存
-    """
     sh = get_worksheet(SHEET_NAME_SCHEDULE)
     if sh:
-        # 保存用のリストを作成
         rows_to_save = []
         for index, row in df_input.iterrows():
-            # 画像の並び: 日付 | ライン | 型番 | ロット | 数量
-            # 保存する並び: date, factory, line, model, lot, plan_qty
-            
-            # 数量のカンマなどを除去して数値化
             qty_str = str(row.get('数量', '0')).replace(',', '')
-            
             new_row = [
                 str(row.get('日付', '')),
-                factory_name,             # 画面で選択した工場
+                factory_name,
                 str(row.get('ライン', '')),
                 str(row.get('型番', '')),
                 str(row.get('ロット', '')),
                 qty_str
             ]
             rows_to_save.append(new_row)
-            
-        # 一括追加
         for r in rows_to_save:
             sh.append_row(r)
         st.cache_data.clear()
@@ -166,7 +154,6 @@ def admin_page():
             st.cache_data.clear()
             st.rerun()
 
-        # データ読み込み
         df_schedule = get_data_as_df(SHEET_NAME_SCHEDULE)
         df_reports = get_data_as_df(SHEET_NAME_REPORT)
         df_rules = get_data_as_df(SHEET_NAME_RULES)
@@ -177,25 +164,21 @@ def admin_page():
             today_str = date.today().strftime('%Y-%m-%d')
             progress_data = []
 
-            # 計画を1行ずつチェック
             for i, plan in df_schedule.iterrows():
                 p_date = plan['date']
                 p_factory = plan['factory']
                 p_line = plan['line']
-                p_model = plan['model'] # 型番
+                p_model = plan['model']
                 p_lot = str(plan['lot'])
-                
                 try:
                     p_qty = int(str(plan['plan_qty']).replace(',', ''))
                 except:
                     p_qty = 0
 
-                # 判定ルール検索: 工場・ライン・型番で一致するルールを探す
+                # ルール検索
                 target_machine = None
-                target_col = "研削数" # デフォルト
-
+                target_col = "研削数"
                 if not df_rules.empty:
-                    # ルールの 'model' 列と比較
                     rules = df_rules[
                         (df_rules['factory'] == p_factory) & 
                         (df_rules['line'] == p_line) & 
@@ -208,29 +191,21 @@ def admin_page():
                 # 実績集計
                 actual_qty = 0
                 if not df_reports.empty:
-                    # フィルタ: 工場、ライン、型番、ロット
                     mask = (
                         (df_reports['工場'] == p_factory) &
                         (df_reports['ライン'] == p_line) &
                         (df_reports['型番'] == p_model) &
                         (df_reports['ロット'].astype(str) == p_lot)
                     )
-                    
-                    # 機械判定 (ルールがあればその機械だけ)
                     if target_machine and target_machine != "指定なし":
                         mask = mask & (df_reports['機械'] == target_machine)
-                    
                     filtered = df_reports[mask]
-
-                    # 集計対象カラム
                     col_name = "研削数" 
                     if target_col == "ラバ数": col_name = "ラバ数"
-                    
-                    # 数値変換して合計
                     if col_name in filtered.columns:
                         actual_qty = pd.to_numeric(filtered[col_name], errors='coerce').fillna(0).sum()
 
-                # ステータス判定
+                # ステータス
                 diff = actual_qty - p_qty
                 status = "進行中"
                 if diff >= 0:
@@ -251,10 +226,7 @@ def admin_page():
                     "判定機械": target_machine or "(全機械)"
                 })
 
-            # 表示
             df_res = pd.DataFrame(progress_data)
-            
-            # 条件付き書式（遅延は赤、完了は緑）
             def highlight_status(val):
                 color = ''
                 if val == '遅延': color = 'background-color: #ffcccc'
@@ -267,18 +239,14 @@ def admin_page():
                 height=600
             )
 
-    # --- タブ2: 計画アップロード (ご要望のフォーマット対応) ---
+    # --- タブ2: 計画アップロード ---
     with tab_plan_upload:
         st.subheader("生産計画データの登録")
-        
-        # 1. どの工場の計画かを選択
         target_factory = st.selectbox("対象工場を選択してください", ["本社工場", "八尾工場"])
-        
         st.markdown("---")
         st.info("Excelから以下の5列をコピーして貼り付けてください。")
         st.caption("並び順: **日付 | ライン | 型番 | ロット | 数量**")
 
-        # テンプレート（画像の並びに合わせる）
         template_data = {
             "日付": ["2025-01-01"], 
             "ライン": ["ラインA"], 
@@ -287,63 +255,77 @@ def admin_page():
             "数量": [1000]
         }
         df_template = pd.DataFrame(template_data)
-        
-        # エディタ表示 (行追加可能)
         edited_df = st.data_editor(
             df_template,
             num_rows="dynamic",
             use_container_width=True,
             key="schedule_editor"
         )
-
         if st.button("計画を保存する", type="primary"):
             if not edited_df.empty:
-                # 指定の工場名を付与して保存
                 append_schedule_data(target_factory, edited_df)
                 st.success("✅ スプレッドシートに登録しました！")
             else:
                 st.warning("データがありません")
 
-    # --- タブ3: 判定ルール設定 (型番ベースに変更) ---
+    # --- タブ3: 判定ルール設定 ---
     with tab_rules:
         st.subheader("進捗判定ルールの設定")
-        st.caption("「この型番は、この機械を通ったら完了」というルールを決めます。")
-
         f_list = ["本社工場", "八尾工場"]
         c1, c2 = st.columns(2)
         r_factory = c1.selectbox("工場", f_list)
-        
-        # マスタから選択肢取得
         l_list = get_options("line", r_factory)
-        m_list = get_options("model", r_factory) # 型番
+        m_list = get_options("model", r_factory)
         mac_list = get_options("machine", r_factory)
 
         r_line = c2.selectbox("ライン", l_list)
         r_model = c1.selectbox("型番 (Model)", ["(指定なし)"] + m_list)
         
-        st.markdown("👇 **判定基準**")
         col_rule1, col_rule2 = st.columns(2)
         r_target_machine = col_rule1.selectbox("判定機械 (完了とする機械)", mac_list)
         r_target_col = col_rule2.radio("判定数値", ["研削数", "ラバ数"], horizontal=True)
 
         if st.button("ルールを保存"):
             save_counting_rule(r_factory, r_line, r_model, r_target_machine, r_target_col)
-            st.success(f"保存しました: {r_model} ({r_line}) → {r_target_machine} の {r_target_col}")
+            st.success("保存しました")
         
         st.write("▼ 現在のルール一覧")
         df_rules_curr = get_data_as_df(SHEET_NAME_RULES)
         if not df_rules_curr.empty:
             st.dataframe(df_rules_curr)
 
-    # --- タブ4: マスタ管理 ---
+    # --- タブ4: マスタ管理 (日本語化修正) ---
     with tab_master:
         st.subheader("項目マスタ管理")
+        st.caption("新しいラインや製品名を追加します。")
+
+        # 工場選択
         tf = st.selectbox("追加先工場", ["本社工場", "八尾工場"], key="mst_fac")
-        tc = st.selectbox("追加項目", ["line", "worker", "model", "product", "machine"])
-        val = st.text_input("名称")
-        if st.button("追加"):
-            if val: add_option(tf, tc, val)
-            st.success("追加しました")
+
+        # カテゴリの日本語マップ
+        category_map = {
+            "line": "ライン種別",
+            "worker": "作業者",
+            "model": "型番",
+            "product": "製品種別",
+            "machine": "機械種別"
+        }
+
+        # 辞書のキー(line等)を使いつつ、表示は値(ライン種別等)にする
+        tc_key = st.selectbox(
+            "追加する項目の種類", 
+            options=list(category_map.keys()), 
+            format_func=lambda x: category_map[x]
+        )
+
+        val = st.text_input("追加する名称 (例: ラインC, 新人A)")
+        
+        if st.button("追加実行", type="primary"):
+            if val:
+                add_option(tf, tc_key, val)
+                st.success(f"「{tf}」の「{category_map[tc_key]}」に「{val}」を追加しました")
+            else:
+                st.warning("名称を入力してください")
 
 # ==========================================
 # 画面3: 作業者ページ
