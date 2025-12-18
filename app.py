@@ -5,9 +5,9 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- 設定 ---
-SPREADSHEET_ID = '1mobXuRWq4fu1NZQsFm4Qw9-2uSVotttpefk9MWwOW54' # あなたのIDのまま
+SPREADSHEET_ID = '1mobXuRWq4fu1NZQsFm4Qw9-2uSVotttpefk9MWwOW54'
 SHEET_NAME_REPORT = 'Reports'
-SHEET_NAME_SETTINGS = 'Settings' # 新しく作ったシート
+SHEET_NAME_SETTINGS = 'Settings'
 
 st.set_page_config(page_title="作業日報システム", layout="wide")
 
@@ -24,23 +24,36 @@ def get_worksheet(sheet_name):
         st.error(f"接続エラー ({sheet_name}): {e}")
         return None
 
-# --- マスタデータ（選択肢）の読み込み ---
-def get_options(category_name):
+# --- マスタデータ読み込み（工場でフィルタリング） ---
+def get_options(category_name, factory_name):
+    """
+    指定されたカテゴリの選択肢を取得する。
+    factory_name が指定されている場合は、その工場のデータだけを返す。
+    """
     sh = get_worksheet(SHEET_NAME_SETTINGS)
     if sh:
         data = sh.get_all_records()
         df = pd.DataFrame(data)
-        # category列が一致するものだけを抽出してリスト化
-        if not df.empty and 'category' in df.columns:
-            return df[df['category'] == category_name]['value'].tolist()
-    return [] # データがない場合は空リスト
+        
+        if not df.empty and 'category' in df.columns and 'factory' in df.columns:
+            # 1. カテゴリで絞り込み
+            df_cat = df[df['category'] == category_name]
+            
+            # 2. 工場で絞り込み（"共通" という設定があってもいいように実装）
+            # ここではシンプルに「工場の名前が一致するもの」だけを抽出
+            df_factory = df_cat[df_cat['factory'] == factory_name]
+            
+            return df_factory['value'].tolist()
+            
+    return []
 
-# --- マスタデータ（選択肢）の追加 ---
-def add_option(category, value):
+# --- マスタデータ追加（工場情報付き） ---
+def add_option(factory, category, value):
     sh = get_worksheet(SHEET_NAME_SETTINGS)
     if sh:
-        sh.append_row([category, value])
-        st.cache_data.clear() # キャッシュを消して即座に反映
+        # factory, category, value の順で保存
+        sh.append_row([factory, category, value])
+        st.cache_data.clear()
 
 # --- 日報保存 ---
 def save_report(data_dict):
@@ -72,17 +85,16 @@ def load_reports():
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 if 'role' not in st.session_state:
-    st.session_state['role'] = "user" # user か admin
+    st.session_state['role'] = "user"
 
 # ==========================================
-# 画面1: ログイン (管理者を追加)
+# 画面1: ログイン
 # ==========================================
 def login_page():
     st.markdown("## 🏭 作業日報システム")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.container(border=True):
-            # ログインタイプ選択
             login_type = st.radio("ログイン種別", ["作業者", "管理者"], horizontal=True)
             
             if login_type == "作業者":
@@ -98,10 +110,10 @@ def login_page():
                     else:
                         st.error("パスワードが違います")
             
-            else: # 管理者ログイン
+            else:
                 admin_pass = st.text_input("管理者パスワード", type="password")
                 if st.button("管理者ログイン", type="primary", use_container_width=True):
-                    if admin_pass == "admin123": # 仮の管理者パスワード
+                    if admin_pass == "admin123":
                         st.session_state['logged_in'] = True
                         st.session_state['role'] = "admin"
                         st.session_state['factory'] = "全社管理"
@@ -110,57 +122,58 @@ def login_page():
                         st.error("パスワードが違います")
 
 # ==========================================
-# 画面2: 管理者設定画面 (NEW!)
+# 画面2: 管理者設定画面（工場を指定して追加）
 # ==========================================
 def admin_page():
     st.title("🛠 管理者設定画面")
-    
     with st.sidebar:
-        st.write("ログイン中: 管理者")
+        st.write("権限: 管理者")
         if st.button("ログアウト"):
             st.session_state['logged_in'] = False
             st.rerun()
 
-    st.info("ここでドロップダウンの選択肢を追加できます。")
+    st.info("工場ごとに表示する項目を管理します。")
 
-    # 追加したいカテゴリを選択
-    target_cat = st.selectbox("編集する項目を選択", [
+    # 1. どの工場の設定をするか
+    target_factory = st.selectbox("設定する工場を選択", ["本社工場", "八尾工場"])
+    
+    # 2. どの項目を追加するか
+    target_cat = st.selectbox("追加する項目", [
         "line", "worker", "model", "product", "machine"
     ], format_func=lambda x: {
         "line": "ライン種別", "worker": "作業者", "model": "型番", 
         "product": "製品種別", "machine": "機械種別"
     }[x])
 
-    # 現在のリストを表示
-    current_list = get_options(target_cat)
-    st.write(f"▼ 現在の登録済みリスト ({len(current_list)}件)")
+    # 現在のリストを表示（選んだ工場のものだけ表示）
+    current_list = get_options(target_cat, target_factory)
+    st.write(f"▼ **{target_factory}** の現在のリスト")
     st.code(", ".join(current_list) if current_list else "(登録なし)")
 
     # 新規追加フォーム
     with st.form("add_master_form"):
-        new_value = st.text_input("追加する名称を入力")
+        new_value = st.text_input(f"{target_factory} 用に追加する名称")
         if st.form_submit_button("追加する", type="primary"):
-            if new_value and new_value not in current_list:
-                add_option(target_cat, new_value)
-                st.success(f"「{new_value}」を追加しました！")
+            if new_value:
+                add_option(target_factory, target_cat, new_value)
+                st.success(f"{target_factory} に「{new_value}」を追加しました")
                 st.rerun()
-            elif new_value in current_list:
-                st.warning("その名称は既に登録されています。")
             else:
-                st.warning("名称を入力してください。")
+                st.warning("名称を入力してください")
 
     st.markdown("---")
-    st.subheader("📊 全データ確認")
-    if st.button("日報データを読み込む"):
+    if st.button("日報データ全件確認"):
         df = load_reports()
         st.dataframe(df)
 
 # ==========================================
-# 画面3: 作業者ページ (選択肢を動的に変更)
+# 画面3: 作業者ページ（自分の工場の選択肢のみ表示）
 # ==========================================
 def user_page():
+    current_factory = st.session_state['factory']
+    
     with st.sidebar:
-        st.write(f"所属: **{st.session_state['factory']}**")
+        st.write(f"所属: **{current_factory}**")
         if st.button("ログアウト"):
             st.session_state['logged_in'] = False
             st.rerun()
@@ -168,15 +181,19 @@ def user_page():
     tab_input, tab_list = st.tabs(["📝 日報入力", "📊 履歴一覧"])
 
     with tab_input:
-        st.subheader("作業日報入力")
+        st.subheader(f"作業日報 ({current_factory})")
+        
         with st.form("work_report_form"):
-            # スプレッドシートから選択肢を取得
-            # データがない場合のデフォルト値も設定
-            opt_lines = get_options("line") or ["(管理者が未登録)"]
-            opt_workers = get_options("worker") or ["(管理者が未登録)"]
-            opt_models = get_options("model") or ["その他"]
-            opt_products = get_options("product") or ["その他"]
-            opt_machines = get_options("machine") or ["その他"]
+            # 【重要】現在の工場 (current_factory) を渡して、その工場のデータだけ取る
+            opt_lines = get_options("line", current_factory)
+            opt_workers = get_options("worker", current_factory)
+            opt_models = get_options("model", current_factory)
+            opt_products = get_options("product", current_factory)
+            opt_machines = get_options("machine", current_factory)
+
+            # データが空の場合の表示
+            if not opt_lines: opt_lines = ["(管理者設定待ち)"]
+            if not opt_workers: opt_workers = ["(管理者設定待ち)"]
 
             c1, c2 = st.columns(2)
             line = c1.selectbox("▎ライン種別", opt_lines)
@@ -189,7 +206,6 @@ def user_page():
             machine = c4.selectbox("▎機械種別", opt_machines)
 
             st.markdown("---")
-            # 数値入力など（変更なし）
             c_k1, c_k2 = st.columns(2)
             k_ok = c_k1.number_input("▎研削 研磨数", min_value=0)
             k_ng = c_k2.number_input("▎研削 不良数", min_value=0)
@@ -202,7 +218,7 @@ def user_page():
 
             if st.form_submit_button("日報を提出", type="primary", use_container_width=True):
                 report_data = {
-                    "factory": st.session_state['factory'],
+                    "factory": current_factory,
                     "worker": worker, "line": line, "model": model,
                     "product": product, "machine": machine,
                     "k_ok": k_ok, "k_ng": k_ng, "r_ok": r_ok, "r_ng": r_ng,
@@ -215,9 +231,14 @@ def user_page():
         if st.button("最新データ取得"):
             st.cache_data.clear()
             st.rerun()
+            
         df = load_reports()
         if not df.empty:
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            # 履歴も「自分の工場」のものだけ表示するようにフィルタリング
+            df_filtered = df[df['工場'] == current_factory]
+            st.dataframe(df_filtered, use_container_width=True, hide_index=True)
+        else:
+            st.info("データがありません")
 
 # ==========================================
 # メイン処理
