@@ -1,127 +1,145 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date
+from datetime import datetime
 
-# --- ページ設定 (ブラウザのタブ名など) ---
-st.set_page_config(
-    page_title="Daily Walker",
-    page_icon="🚶",
-    layout="centered" # スマホでも見やすいように中央寄せ
-)
+# --- ページ設定 ---
+st.set_page_config(page_title="作業日報システム", layout="centered")
 
-# --- 擬似的なデータベース (後でGoogle Sheetsに置き換えます) ---
-if 'reports' not in st.session_state:
-    # サンプルデータを入れておく
-    st.session_state['reports'] = [
-        {"Date": "2023-10-27", "User": "Taro", "Mood": "😁 快調", "Work": "開発:4h, MTG:2h", "Comment": "Streamlitの学習が進んだ。"},
-        {"Date": "2023-10-26", "User": "Hanako", "Mood": "😅 普通", "Work": "設計:3h, 資料:3h", "Comment": "少し疲れ気味。早めに寝ます。"},
-    ]
-
-# --- ログイン状態の管理 ---
+# --- セッション状態の初期化 ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
-if 'user_name' not in st.session_state:
-    st.session_state['user_name'] = ""
+if 'factory' not in st.session_state:
+    st.session_state['factory'] = ""
+if 'work_status' not in st.session_state:
+    st.session_state['work_status'] = "before_start" # 状態管理用
 
 # ==========================================
-# 画面1: ログイン画面
+# 画面1: ログイン画面 (工場選択・別パスワード)
 # ==========================================
 def login_page():
-    st.markdown("## 🚶 Daily Walker")
-    st.caption("チームのコンディションを可視化する")
+    st.markdown("## 🏭 作業日報システム")
     
-    with st.container(border=True): # カードのような枠線
-        email = st.text_input("Email", placeholder="user@example.com")
-        password = st.text_input("Password", type="password")
+    with st.container(border=True):
+        st.subheader("ログイン")
         
-        if st.button("サインイン", use_container_width=True, type="primary"):
-            # 簡易的な認証チェック (本番はSheetsと照合)
-            if email and password: 
+        # 工場の選択
+        factory = st.selectbox("工場を選択してください", ["本社工場", "八尾工場"])
+        
+        # パスワード入力
+        password = st.text_input("パスワード", type="password")
+        
+        if st.button("ログイン", type="primary", use_container_width=True):
+            # --- パスワード判定ロジック ---
+            # 本社工場なら 'honsha'、八尾工場なら 'yao' が正解とします
+            if factory == "本社工場" and password == "honsha":
                 st.session_state['logged_in'] = True
-                st.session_state['user_name'] = email.split('@')[0] # @より前を名前にする
-                st.rerun() # 画面をリロードして切り替え
+                st.session_state['factory'] = factory
+                st.rerun()
+            elif factory == "八尾工場" and password == "yao":
+                st.session_state['logged_in'] = True
+                st.session_state['factory'] = factory
+                st.rerun()
             else:
-                st.error("入力してください")
+                st.error("パスワードが違います")
 
 # ==========================================
-# 画面2: メインアプリ画面 (日報入力 & 一覧)
+# 画面2: 作業日報入力画面 (画像を再現)
 # ==========================================
-def main_app():
-    # サイドバー (ログアウトなど)
+def work_log_page():
+    # サイドバー（ログアウト用）
     with st.sidebar:
-        st.write(f"ようこそ、**{st.session_state['user_name']}** さん")
+        st.write(f"所属: **{st.session_state['factory']}**")
+        st.write(f"担当: ゲスト ユーザー")
         if st.button("ログアウト"):
             st.session_state['logged_in'] = False
             st.rerun()
 
-    # タブで「書く」と「見る」を切り替え
-    tab1, tab2 = st.tabs(["📝 日報を書く", "👀 みんなの日報"])
+    # --- ヘッダーエリア ---
+    # 画像のようなオレンジの縦棒を入れるのはCSSが必要ですが、
+    # Streamlit標準機能で似たレイアウトを作ります。
+    
+    # 1段目: ライン種別 | 作業者
+    c1, c2 = st.columns(2)
+    with c1:
+        st.selectbox("▎ライン種別", ["外径ライン", "組み立てライン", "3号ライン"])
+    with c2:
+        st.selectbox("▎作業者", ["廣瀬", "青井", "門", "坂本"])
 
-    # --- タブ1: 作成画面 ---
-    with tab1:
-        st.subheader("今日の振り返り")
-        
-        with st.form("daily_report_form"):
-            # 日付とコンディションを横並びで
-            col1, col2 = st.columns(2)
-            with col1:
-                report_date = st.date_input("日付", date.today())
-            with col2:
-                # コンディションを直感的に選択
-                mood = st.selectbox("今日の調子は？", ["😁 快調", "🙂 普通", "😅 疲れ気味", "😵 SOS"])
+    # 2段目: 型番
+    st.selectbox("▎型番", ["検索...", "UA25", "SN6311T071", "RNU205ETW2"])
 
-            # 業務内訳 (スライダーで調整)
-            st.markdown("**業務時間の内訳 (TaskWalker Style)**")
-            dev_time = st.slider("💻 開発 / 実装", 0, 12, 4)
-            mtg_time = st.slider("🗣 ミーティング", 0, 12, 2)
-            doc_time = st.slider("📄 資料作成 / その他", 0, 12, 1)
+    # 3段目: 製品種別 | 機械種別
+    c3, c4 = st.columns(2)
+    with c3:
+        st.selectbox("▎製品種別", ["SHI", "韓国", "シリンドリカル"])
+    with c4:
+        st.selectbox("▎機械種別", ["センターレス1号機", "T11J", "韓国製品組立機 1号機"])
 
-            # ひとこと
-            comment = st.text_area("所感・明日の予定", height=100, placeholder="今日はここがうまくいった、明日はこれをする、など")
+    st.markdown("---") # 区切り線
 
-            # 送信ボタン
-            submitted = st.form_submit_button("日報を提出する", use_container_width=True, type="primary")
+    # --- 開始ボタン (緑色の大きなボタンをイメージ) ---
+    # type="primary" にすると強調色(赤やオレンジなど設定依存)になりますが、
+    # ここでは「一番目立つボタン」として配置します。
+    if st.button("開 始", type="primary", use_container_width=True):
+        st.toast("作業を開始しました！ ⏱️")
 
-            if submitted:
-                # データを保存する処理
-                new_report = {
-                    "Date": report_date.strftime('%Y-%m-%d'),
-                    "User": st.session_state['user_name'],
-                    "Mood": mood,
-                    "Work": f"開発:{dev_time}h, MTG:{mtg_time}h, その他:{doc_time}h",
-                    "Comment": comment
-                }
-                st.session_state['reports'].insert(0, new_report) # 先頭に追加
-                st.success("お疲れ様でした！提出しました。")
+    st.markdown("") # 余白
 
-    # --- タブ2: 一覧画面 (ダッシュボード) ---
-    with tab2:
-        st.subheader("チームのタイムライン")
-        
-        # データをDataFrameに変換して表示
-        df = pd.DataFrame(st.session_state['reports'])
-        
-        # Streamlit標準のデータフレーム表示より、カード風に見せる
-        for index, row in df.iterrows():
-            with st.container(border=True):
-                # ヘッダー行: 名前とコンディション
-                c1, c2 = st.columns([3, 1])
-                with c1:
-                    st.markdown(f"**{row['User']}** <span style='color:gray; font-size:0.8em'>{row['Date']}</span>", unsafe_allow_html=True)
-                with c2:
-                    st.write(row['Mood'])
-                
-                # コンテンツ
-                st.info(f"📊 {row['Work']}") # 青い帯で業務時間を表示
-                st.write(row['Comment'])
-                
-                # リアクションボタン（見た目だけ）
-                st.button("❤️ いいね", key=f"like_{index}", help="お疲れ様！")
+    # --- 段取りエリア ---
+    st.markdown("##### ▎段取種別")
+    
+    # ラジオボタンを横並びにするには columns を使うか CSS ですが、
+    # 簡易的に標準の radio で horizontal=True を使います
+    dandori_type = st.radio("段取種別", ["大段取", "小段取"], horizontal=True, label_visibility="collapsed")
+    
+    st.caption("※段取り中は以下のボタンを押下してください。")
+    if st.button("段取り", use_container_width=True):
+        st.toast(f"「{dandori_type}」を記録しました")
+
+    st.markdown("---")
+
+    # --- 中断・再開エリア ---
+    st.markdown("##### ▎中断内容")
+    st.selectbox("中断内容", ["(選択なし)", "材料待ち", "機械トラブル", "休憩", "清掃"], label_visibility="collapsed")
+    
+    # 中断・再開ボタンを横並びに
+    c_pause, c_resume = st.columns(2)
+    with c_pause:
+        if st.button("中 断", use_container_width=True):
+            st.warning("作業を中断しました")
+    with c_resume:
+        if st.button("再 開", use_container_width=True):
+            st.info("作業を再開しました")
+
+    st.markdown("---")
+
+    # --- 実績入力エリア ---
+    # 研削
+    c_k1, c_k2 = st.columns(2)
+    with c_k1:
+        st.number_input("▎研削 研磨数", min_value=0, step=1)
+    with c_k2:
+        st.number_input("▎研削 不良数", min_value=0, step=1)
+    
+    # ラバ研
+    c_r1, c_r2 = st.columns(2)
+    with c_r1:
+        st.number_input("▎ラバ研 研磨数", min_value=0, step=1)
+    with c_r2:
+        st.number_input("▎ラバ研 不良数", min_value=0, step=1)
+
+    # 備考
+    st.text_area("▎備考", height=100)
+
+    # --- 終了ボタン ---
+    st.markdown("")
+    if st.button("終 了", use_container_width=True):
+        st.success("お疲れ様でした！日報を送信しました。")
 
 # ==========================================
-# アプリの起動制御
+# メイン処理
 # ==========================================
 if st.session_state['logged_in']:
-    main_app()
+    work_log_page()
 else:
     login_page()
