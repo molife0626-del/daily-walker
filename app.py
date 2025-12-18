@@ -125,8 +125,8 @@ def login_page():
                 factory = st.selectbox("工場", ["本社工場", "八尾工場"])
                 password = st.text_input("パスワード", type="password")
                 if st.button("ログイン", type="primary", use_container_width=True):
-                    if (factory == "本社工場" and password == "honsha") or \
-                       (factory == "八尾工場" and password == "yao"):
+                    if (factory == "本社工場" and password == "3457") or \
+                       (factory == "八尾工場" and password == "3457"):
                         st.session_state['logged_in'] = True
                         st.session_state['role'] = "user"
                         st.session_state['factory'] = factory
@@ -136,7 +136,7 @@ def login_page():
             else:
                 admin_pass = st.text_input("管理者パスワード", type="password")
                 if st.button("管理者ログイン", type="primary", use_container_width=True):
-                    if admin_pass == "admin123":
+                    if admin_pass == "mbss3457":
                         st.session_state['logged_in'] = True
                         st.session_state['role'] = "admin"
                         st.session_state['factory'] = "全社管理"
